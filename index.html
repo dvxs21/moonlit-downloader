@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Moonlit Downloader</title>
+<style>
+:root{
+  --g1:#1f6b3a; --g2:#2a8049; --g3:#3da35f;
+  --ink:#e9f2ec; --mute:#9db5a8;
+  --glass:rgba(7,17,15,.8); --edge:rgba(190,235,212,.15);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;background:#050b10;color:var(--ink);font-family:"Segoe UI",system-ui,sans-serif}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+.vig{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.6) 100%)}
+.card{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(540px,calc(100vw - 32px));padding:30px;border-radius:30px;
+  background:var(--glass);
+  border:1px solid var(--edge);box-shadow:0 24px 70px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06)}
+h1{margin:0 0 4px;font-size:26px;font-weight:600;letter-spacing:.2px}
+.sub{margin:0 0 22px;color:var(--mute);font-size:14px}
+.row{display:flex;gap:10px;margin-bottom:12px}
+input,select,button{font:inherit;color:var(--ink);border-radius:16px;border:1px solid var(--edge);background:rgba(255,255,255,.07);padding:13px 16px;outline:none;transition:background .15s,border-color .15s,transform .1s,box-shadow .15s}
+input{flex:1;min-width:0}
+input::placeholder{color:#7f968a}
+select{flex:1;cursor:pointer;appearance:none;padding-right:34px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%239db5a8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 14px center}
+select option{background:#0c1a16;color:var(--ink)}
+input:focus,select:focus{border-color:var(--g3);box-shadow:0 0 0 3px rgba(61,163,95,.28)}
+button{cursor:pointer;font-weight:600}
+button:hover{background:rgba(255,255,255,.13)}
+button:active{transform:scale(.97)}
+button:focus-visible{box-shadow:0 0 0 3px rgba(61,163,95,.4)}
+.primary{background:linear-gradient(180deg,var(--g2),var(--g1));border-color:rgba(120,210,150,.35);color:#fff;flex:1;box-shadow:0 8px 22px rgba(20,90,45,.45)}
+.primary:hover{background:linear-gradient(180deg,var(--g3),var(--g2))}
+.primary:disabled{opacity:.55;cursor:default;transform:none}
+.track{height:12px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden;margin-top:18px}
+.fill{height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,var(--g1),var(--g3));box-shadow:0 0 14px rgba(61,163,95,.6);transition:width .5s ease}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:12px;min-height:44px}
+#msg{font-size:14px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#msg.err{color:#ffab9c} #msg.ok{color:#9fe3b6}
+#open{padding:10px 16px;font-size:14px;white-space:nowrap}
+#ver{position:fixed;right:14px;bottom:10px;font-size:12px;color:rgba(200,225,212,.45)}
+</style>
+</head>
+<body>
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="vig"></div>
+
+<main class="card">
+  <h1>Moonlit Downloader</h1>
+  <p class="sub">Paste a YouTube link and it lands in your Downloads folder.</p>
+  <div class="row">
+    <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" spellcheck="false" aria-label="YouTube link">
+    <button id="paste" type="button">Paste</button>
+  </div>
+  <div class="row">
+    <select id="q" aria-label="Quality">
+      <option value="1080">1080p HD (video + audio)</option>
+      <option value="2160">4K (video + audio)</option>
+      <option value="1440">1440p (video + audio)</option>
+      <option value="720">720p (video + audio)</option>
+      <option value="mp3">Audio only (MP3)</option>
+    </select>
+    <button id="go" type="button" class="primary">Download</button>
+  </div>
+  <div class="track"><div class="fill" id="bar"></div></div>
+  <div class="foot">
+    <span id="msg" role="status">Ready.</span>
+    <button id="open" type="button">Open folder</button>
+  </div>
+</main>
+<div id="ver">v__VERSION__</div>
+
+<script>
+const TOKEN = "__TOKEN__";
+const $ = id => document.getElementById(id);
+
+/* ---------- UI ---------- */
+async function api(path, body) {
+  const r = await fetch(path, {method: body ? 'POST' : 'GET', headers: {'X-Token': TOKEN, 'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  return r.json();
+}
+function say(text, cls = '') { const m = $('msg'); m.textContent = text; m.className = cls; }
+
+$('paste').onclick = async () => {
+  try { $('url').value = (await navigator.clipboard.readText()).trim(); } catch { $('url').focus(); }
+};
+$('go').onclick = async () => {
+  const url = $('url').value.trim();
+  if (!url) return say('Paste a YouTube link first.', 'err');
+  const r = await api('/download', {url, quality: $('q').value});
+  if (r.error) say(r.error, 'err'); else say('Starting…');
+};
+$('url').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+$('open').onclick = () => api('/open', {});
+
+async function poll() {
+  try {
+    const s = await api('/status');
+    const busy = s.phase === 'downloading' || s.phase === 'finishing';
+    $('go').disabled = busy;
+    if (busy || s.phase === 'done') $('bar').style.width = (s.pct || 0) + '%';
+    if (s.phase === 'downloading') say('Downloading… ' + s.pct + '%');
+    else if (s.phase === 'finishing') say('Finishing up…');
+    else if (s.phase === 'done') say('Saved: ' + (s.file || 'done'), 'ok');
+    else if (s.phase === 'error') { $('bar').style.width = '0%'; say(s.msg, 'err'); }
+  } catch { /* server gone: window is about to close */ }
+}
+setInterval(poll, 700); poll();
+
+/* ---------- Forest (static parts are pre-rendered; only leaves, mist and fireflies animate) ---------- */
+const cv = $('bg'), cx = cv.getContext('2d', {alpha: false});
+let W, H, S, layers = [], stars = [], flies = [], moon = {}, skyImg;
+const mouse = {x: -999, y: -999, nx: .5, sx: .5, vx: 0, vy: 0};
+const FOG = [16, 38, 52], DEPTHS = [.08, .22, .4, .6, .8, 1], TREES = [9, 8, 7, 5, 4, 3], PAD = 40;
+
+const rng = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+const rgb = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+const canvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+function sprite(size, stops) {
+  const c = canvas(size, size), g = c.getContext('2d'), r = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  stops.forEach(([o, col]) => r.addColorStop(o, col));
+  g.fillStyle = r; g.fillRect(0, 0, size, size); return c;
+}
+const flySprite = sprite(32, [[0, 'rgba(230,255,170,1)'], [.25, 'rgba(190,240,120,.55)'], [1, 'rgba(150,220,90,0)']]);
+const mistSprite = sprite(128, [[0, 'rgba(120,160,185,.22)'], [1, 'rgba(120,160,185,0)']]);
+
+function bakeSky() {
+  const c = canvas(W, H), g = c.getContext('2d');
+  const sk = g.createLinearGradient(0, 0, 0, H * .8);
+  sk.addColorStop(0, '#040a14'); sk.addColorStop(.55, '#0b2030'); sk.addColorStop(1, '#1b4254');
+  g.fillStyle = sk; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'lighter';
+  const gl = g.createRadialGradient(moon.x, moon.y, moon.r * .8, moon.x, moon.y, moon.r * 9);
+  gl.addColorStop(0, 'rgba(190,220,235,.38)'); gl.addColorStop(.35, 'rgba(110,160,185,.12)'); gl.addColorStop(1, 'rgba(60,100,130,0)');
+  g.fillStyle = gl; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'source-over';
+  const md = g.createRadialGradient(moon.x - moon.r * .3, moon.y - moon.r * .3, moon.r * .1, moon.x, moon.y, moon.r);
+  md.addColorStop(0, '#fffbe8'); md.addColorStop(1, '#d9dcc4');
+  g.fillStyle = md; g.beginPath(); g.arc(moon.x, moon.y, moon.r, 0, 6.283); g.fill();
+  g.fillStyle = 'rgba(120,130,120,.16)';
+  for (const [dx, dy, rr] of [[-.35, -.1, .22], [.25, .3, .17], [.2, -.4, .12], [-.1, .45, .1]]) { g.beginPath(); g.arc(moon.x + dx * moon.r, moon.y + dy * moon.r, rr * moon.r, 0, 6.283); g.fill(); }
+  return c;
+}
+
+function bakeShafts(g) {
+  g.globalCompositeOperation = 'lighter';
+  for (let k = 0; k < 5; k++) {
+    const a = 1.95 + k * .13, wd = .035 + .01 * (k % 2), len = H * 1.4;
+    const x1 = moon.x + Math.cos(a - wd) * len, y1 = moon.y + Math.sin(a - wd) * len, x2 = moon.x + Math.cos(a + wd) * len, y2 = moon.y + Math.sin(a + wd) * len;
+    const gr = g.createLinearGradient(moon.x, moon.y, (x1 + x2) / 2, (y1 + y2) / 2);
+    gr.addColorStop(0, 'rgba(170,205,225,.11)'); gr.addColorStop(1, 'rgba(170,205,225,0)');
+    g.fillStyle = gr; g.beginPath(); g.moveTo(moon.x, moon.y); g.lineTo(x1, y1); g.lineTo(x2, y2); g.closePath(); g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+// everything about a layer that never moves: depth fog, ground, trunks, branches (moonlight shafts sit behind layer 3)
+function bakeLayer(L, li) {
+  const c = canvas(W + PAD * 2, H), g = c.getContext('2d');
+  g.translate(PAD, 0);
+  if (li === 3) bakeShafts(g);
+  const fg = g.createLinearGradient(0, H * .35, 0, H);
+  fg.addColorStop(0, 'rgba(16,38,52,0)'); fg.addColorStop(1, `rgba(16,38,52,${.22 * (1 - L.d) + .08})`);
+  g.fillStyle = fg; g.fillRect(-PAD, 0, W + PAD * 2, H);
+  g.fillStyle = L.col.ground; g.fill(L.ground);
+  g.fillStyle = L.col.trunk; g.strokeStyle = L.col.trunk; g.lineCap = 'round';
+  for (const tr of L.trees) {
+    const mx = tr.x + tr.lean * .5, my = tr.gy - tr.h * .5, w = tr.w;
+    g.beginPath(); g.moveTo(tr.x - w * .65, tr.gy + 8);
+    g.quadraticCurveTo(mx - w * .4, my, tr.top.x - w * .2, tr.top.y);
+    g.lineTo(tr.top.x + w * .2, tr.top.y);
+    g.quadraticCurveTo(mx + w * .4, my, tr.x + w * .65, tr.gy + 8); g.closePath(); g.fill();
+    for (const b of tr.branches) { g.lineWidth = Math.max(1, b.w); g.beginPath(); g.moveTo(b.x, b.y); g.lineTo(b.ex, b.ey); g.stroke(); }
+  }
+  L.img = c;
+}
+
+function build() {
+  const r = rng(7);
+  moon = {x: W * .87, y: H * .17, r: 38 * Math.max(S, .75)};
+  skyImg = bakeSky();
+  stars = Array.from({length: 90}, () => ({x: r() * W, y: r() * H * .55, a: .3 + r() * .7, ph: r() * 6.28}));
+  flies = Array.from({length: 16}, () => ({x: r() * W, y: H * (.5 + r() * .4), ph: r() * 6.28}));
+  layers = DEPTHS.map((d, li) => {
+    const haze = Math.pow(1 - d, 1.2) * .8;
+    const col = {
+      trunk: rgb(mix([7, 13, 13], FOG, haze)), ground: rgb(mix([6, 16, 14], FOG, haze * .9)),
+      cols: [rgb(mix([9, 30, 22], FOG, haze)), rgb(mix([22, 62, 42], FOG, haze)), rgb(mix([100, 156, 128], FOG, haze * .7))]
+    };
+    const gBase = H * (.72 + .22 * d), trees = [], clusters = [], buckets = [[], [], []];
+    for (let i = 0; i < TREES[li]; i++) {
+      const x = (i + r()) / TREES[li] * W * 1.1 - W * .05, gy = gBase + (r() - .5) * H * .03;
+      const h = H * (.4 + .42 * d) * (.8 + .4 * r()), w = (5 + 30 * d) * S * (.8 + .4 * r());
+      const lean = (r() - .5) * .12 * h, top = {x: x + lean, y: gy - h};
+      const branches = [], nb = 3 + Math.floor(r() * 3);
+      for (let b = 0; b < nb; b++) {
+        const f = .45 + .5 * (b / nb) + r() * .08, bx = x + lean * f, by = gy - h * f;
+        const dir = (b % 2 ? 1 : -1) * (.5 + r() * .9), len = h * (.14 + .16 * r()) * (1.1 - f * .5);
+        branches.push({x: bx, y: by, ex: bx + Math.sin(dir) * len, ey: by - Math.cos(dir) * len * .8, w: w * .35 * (1 - f * .5)});
+      }
+      trees.push({x, gy, w, top, lean, h, branches});
+      const spots = [{x: top.x, y: top.y, R: h * .14}, ...branches.map(b => ({x: b.ex, y: b.ey, R: h * .1}))];
+      for (const s of spots) {
+        const c = {x: s.x, y: s.y, R: s.R, ph: r() * 6.28, sx: 0, sy: 0, fx: 0, near: false}; clusters.push(c);
+        for (let k = 0, n = Math.round(8 + 8 * d); k < n; k++) {
+          const ox = (r() + r() + r() - 1.5) * s.R * 1.3, oy = (r() + r() + r() - 1.5) * s.R * 1.3;
+          const lx = s.x + ox, ly = s.y + oy, rx = (3.5 + 7 * d) * S * (.8 + .5 * r()), ry = rx * .5, a = r() * 3.14;
+          // leaves on the moon-facing side of a cluster catch the light
+          const mx = moon.x - lx, my = moon.y - ly, ml = Math.hypot(mx, my) || 1;
+          const dot = (ox * mx + oy * my) / (ml * s.R * 1.3) + .4 * (r() - .5);
+          buckets[dot > .25 ? 2 : dot > -.25 ? 1 : 0].push({
+            x: lx, y: ly, c, k: r() * 2 - 1,
+            ax: Math.cos(a) * rx, ay: Math.sin(a) * rx, bx: -Math.sin(a) * ry * 2, by: Math.cos(a) * ry * 2,   // lens: tip vector + bulge vector
+            ox: 0, oy: 0, vx: 0, vy: 0, act: false
+          });
+        }
+      }
+    }
+    const ground = new Path2D(); ground.moveTo(-PAD, H);
+    for (let x = -PAD; x <= W + PAD; x += 20) ground.lineTo(x, gBase - 4 + Math.sin(x * .01 + li * 2) * 8 * S);
+    ground.lineTo(W + PAD, H); ground.closePath();
+    const L = {d, col, trees, clusters, buckets, ground};
+    bakeLayer(L, li); return L;
+  });
+}
+
+function resize() {
+  W = innerWidth; H = innerHeight; S = H / 700;
+  cv.width = W; cv.height = H;   // 1:1 pixels on purpose: cheaper than device-pixel-ratio scaling
+  build();
+}
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 150); });
+addEventListener('mousemove', e => {
+  mouse.x = e.clientX; mouse.y = e.clientY; mouse.nx = e.clientX / W;
+  mouse.vx = Math.max(-60, Math.min(60, mouse.vx + e.movementX));
+  mouse.vy = Math.max(-60, Math.min(60, mouse.vy + e.movementY));
+});
+
+function leaves(L, px, t, spd) {
+  const d = L.d, amp = (1.5 + 3 * d) * S, reach = 150 * S * (.5 + .7 * d), lim = 40 * S, moving = spd > .5;
+  for (const c of L.clusters) {   // sway is shared per cluster: a few sin() calls instead of one per leaf
+    c.sx = Math.sin(t * 1.1 + c.ph) * amp + Math.sin(t * .35 + c.x * .004) * amp * 1.5;
+    c.sy = Math.cos(t * .9 + c.ph) * amp * .5;
+    c.fx = Math.sin(t * 2.3 + c.ph * 2) * amp * .5;
+    const dx = c.x + px - mouse.x, dy = c.y - mouse.y, rr = reach + c.R * 1.5;
+    c.near = moving && dx * dx + dy * dy < rr * rr;
+  }
+  for (let bi = 0; bi < 3; bi++) {
+    cx.fillStyle = L.col.cols[bi]; cx.beginPath();
+    for (const l of L.buckets[bi]) {
+      const c = l.c;
+      if (c.near) {
+        const dx = l.x + px + l.ox - mouse.x, dy = l.y + l.oy - mouse.y, d2 = dx * dx + dy * dy;
+        if (d2 < reach * reach) {
+          const dist = Math.sqrt(d2) + .001, f = (1 - dist / reach) ** 2;
+          l.vx += (mouse.vx * .03 + dx / dist * spd * .012) * f; l.vy += (mouse.vy * .03 + dy / dist * spd * .012) * f; l.act = true;
+        }
+      }
+      if (l.act) {   // spring back; leaves at rest cost nothing
+        l.vx -= l.ox * .035; l.vy -= l.oy * .035; l.vx *= .93; l.vy *= .93;
+        l.ox = Math.max(-lim, Math.min(lim, l.ox + l.vx)); l.oy = Math.max(-lim, Math.min(lim, l.oy + l.vy));
+        if (Math.abs(l.ox) + Math.abs(l.oy) + Math.abs(l.vx) + Math.abs(l.vy) < .02) { l.ox = l.oy = l.vx = l.vy = 0; l.act = false; }
+      }
+      const X = l.x + l.ox + c.sx + c.fx * l.k, Y = l.y + l.oy + c.sy;
+      cx.moveTo(X - l.ax, Y - l.ay);
+      cx.quadraticCurveTo(X - l.bx, Y - l.by, X + l.ax, Y + l.ay);
+      cx.quadraticCurveTo(X + l.bx, Y + l.by, X - l.ax, Y - l.ay);
+    }
+    cx.fill();
+  }
+}
+
+function mist(t, seed) {
+  for (let i = 0; i < 3; i++) {
+    const x = ((i * .41 + seed * .17 + t * .004) % 1.3 - .15) * W;
+    cx.drawImage(mistSprite, x - W * .25, H * (.66 + .05 * seed), W * .5, H * .22);
+  }
+}
+
+function frame(ms) {
+  const t = ms / 1000, spd = Math.hypot(mouse.vx, mouse.vy);
+  mouse.sx += (mouse.nx - mouse.sx) * .06;
+  cx.drawImage(skyImg, 0, 0);
+  cx.fillStyle = '#dbe9ff';
+  for (const s of stars) { cx.globalAlpha = s.a * (.6 + .4 * Math.sin(t * 1.3 + s.ph)); cx.fillRect(s.x, s.y, 1.4, 1.4); }
+  cx.globalAlpha = 1;
+  layers.forEach((L, i) => {
+    const px = (mouse.sx - .5) * -40 * L.d * S;
+    cx.drawImage(L.img, px - PAD, 0);
+    leaves(L, px, t, spd);
+    if (i === 1 || i === 3) mist(t, i);
+  });
+  mist(t, 5);
+  for (const f of flies) {
+    const x = f.x + Math.sin(t * .3 + f.ph) * 40 * S, y = f.y + Math.cos(t * .25 + f.ph * 1.3) * 25 * S, sz = 18 * S;
+    cx.globalAlpha = .15 + .85 * Math.pow(.5 + .5 * Math.sin(t * 1.5 + f.ph * 3), 2);
+    cx.drawImage(flySprite, x - sz / 2, y - sz / 2, sz, sz);
+  }
+  cx.globalAlpha = 1;
+  mouse.vx *= .8; mouse.vy *= .8;
+  requestAnimationFrame(frame);
+}
+resize(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>
